@@ -2,9 +2,8 @@
 
 import { use, useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
-
-const ADULT_PRICE = 289;
-const CHILD_PRICE = 145;
+import { ADULT_PRICE, CHILD_PRICE, calcTotal } from '../../../lib/pricing';
+import { buildPromptPayPayload } from '../../../lib/promptpay';
 const MAX_QTY = 5; // จำนวนต่อรายการ
 const MAX_LINES = 10; // รายการต่อการส่ง 1 ครั้ง
 
@@ -43,6 +42,7 @@ export default function OrderPage({ params }) {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null); // { id, adult_count, child_count }
   const [closed, setClosed] = useState(false); // ปิดโต๊ะแล้ว
+  const [billing, setBilling] = useState(false); // เรียกเก็บเงินแล้ว รอชำระ
   const [categories, setCategories] = useState([]);
   const [items, setItems] = useState([]);
   const [activeCat, setActiveCat] = useState(null);
@@ -64,9 +64,9 @@ export default function OrderPage({ params }) {
       try {
         const { data: open, error: e1 } = await supabase
           .from('sessions')
-          .select('id, adult_count, child_count')
+          .select('id, adult_count, child_count, status')
           .eq('table_number', t)
-          .eq('status', 'open')
+          .in('status', ['open', 'billing'])
           .order('created_at', { ascending: false })
           .limit(1);
         if (e1) throw e1;
@@ -76,6 +76,7 @@ export default function OrderPage({ params }) {
           return;
         }
         setSession(open[0]);
+        if (open[0].status === 'billing') setBilling(true);
 
         const [catRes, itemRes] = await Promise.all([
           supabase.from('menu_categories').select('id, name, sort_order').order('sort_order', { ascending: true }),
@@ -96,6 +97,17 @@ export default function OrderPage({ params }) {
     load();
     return () => { cancelled = true; };
   }, [tableNumber]);
+
+  // ตอนรอชำระเงิน: เช็คทุก 5 วินาทีว่าพนักงานรับเงินแล้วหรือยัง
+  useEffect(() => {
+    if (!billing || !session) return;
+    const t = setInterval(async () => {
+      const { data, error: e } = await supabase.from('sessions').select('id, status').eq('id', session.id);
+      if (e) return;
+      if (!data || data.length === 0 || data[0].status === 'closed') setClosed(true);
+    }, 5000);
+    return () => clearInterval(t);
+  }, [billing, session]);
 
   const lineCount = Object.keys(cart).length;
   const totalQty = Object.values(cart).reduce((sum, l) => sum + l.quantity, 0);
@@ -136,10 +148,14 @@ export default function OrderPage({ params }) {
     try {
       // กันกรณีพนักงานปิดโต๊ะไปแล้ว
       const { data: still, error: e0 } = await supabase
-        .from('sessions').select('id').eq('id', session.id).eq('status', 'open');
+        .from('sessions').select('id, status').eq('id', session.id);
       if (e0) throw e0;
-      if (!still || still.length === 0) {
+      if (!still || still.length === 0 || still[0].status === 'closed') {
         setClosed(true);
+        return;
+      }
+      if (still[0].status === 'billing') {
+        setBilling(true);
         return;
       }
 
@@ -169,13 +185,13 @@ export default function OrderPage({ params }) {
     try {
       const { error: e } = await supabase
         .from('sessions')
-        .update({ status: 'closed' })
+        .update({ status: 'billing' })
         .eq('id', session.id)
         .eq('status', 'open')
         .select('id');
       if (e) throw e;
       setShowBill(false);
-      setClosed(true);
+      setBilling(true);
     } catch (err) {
       setShowBill(false);
       setError('เรียกเก็บเงินไม่สำเร็จ: ' + (err.message || 'ไม่ทราบสาเหตุ'));
@@ -186,6 +202,29 @@ export default function OrderPage({ params }) {
 
   if (loading) return <div style={c.full}>กำลังโหลด...</div>;
   if (closed) return <div style={c.full}>ขอบคุณที่ใช้บริการ 🙏<br />Suki Halal</div>;
+  if (billing && session) {
+    const amount = calcTotal(session.adult_count, session.child_count);
+    const payload = buildPromptPayPayload(process.env.NEXT_PUBLIC_PROMPTPAY_ID, amount);
+    return (
+      <div style={{ ...c.full, flexDirection: 'column', gap: 12 }}>
+        <div>ยอดที่ต้องชำระ</div>
+        <div style={{ fontSize: 44, color: c.green }}>{amount.toLocaleString('th-TH')} บาท</div>
+        {payload ? (
+          <>
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payload)}`}
+              alt="QR พร้อมเพย์" width={300} height={300} />
+            <div style={{ fontSize: 18, fontWeight: 'normal' }}>สแกนจ่ายด้วยพร้อมเพย์ หรือชำระเงินสดกับพนักงาน</div>
+          </>
+        ) : (
+          <div style={{ fontSize: 20, fontWeight: 'normal' }}>กรุณาชำระเงินกับพนักงาน</div>
+        )}
+        <div style={{ fontSize: 16, fontWeight: 'normal', color: '#6b7280' }}>
+          หน้านี้จะเปลี่ยนเมื่อพนักงานยืนยันการรับเงินแล้ว
+        </div>
+      </div>
+    );
+  }
   if (!session) {
     return (
       <div style={c.full}>
@@ -283,7 +322,7 @@ export default function OrderPage({ params }) {
             <p style={{ fontSize: 28, fontWeight: 'bold', color: c.green }}>
               ยอดรวม {total.toLocaleString('th-TH')} บาท
             </p>
-            <p style={{ fontSize: 16, color: '#6b7280' }}>เมื่อยืนยันแล้วจะสั่งอาหารเพิ่มไม่ได้</p>
+            <p style={{ fontSize: 16, color: '#6b7280' }}>เมื่อยืนยันแล้วจะสั่งอาหารเพิ่มไม่ได้ และจะแสดงหน้าชำระเงิน</p>
             <button type="button" style={{ ...c.dlgBtn, background: c.green, color: '#fff', opacity: busy ? 0.6 : 1 }}
               disabled={busy} onClick={confirmBill}>ยืนยัน</button>
             <button type="button" style={{ ...c.dlgBtn, background: '#e5e7eb', color: '#111' }}

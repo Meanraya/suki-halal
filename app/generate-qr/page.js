@@ -53,7 +53,7 @@ export default function GenerateQrPage() {
         .from('sessions')
         .select('id, adult_count, child_count, created_at')
         .eq('table_number', t)
-        .eq('status', 'open')
+        .in('status', ['open', 'billing'])
         .order('created_at', { ascending: false })
         .limit(1);
       if (e1) throw e1;
@@ -87,7 +87,7 @@ export default function GenerateQrPage() {
         .from('sessions')
         .update({ status: 'closed' })
         .eq('id', existing.id)
-        .eq('status', 'open') // กันกดซ้ำ: อัปเดตเฉพาะแถวที่ยัง open
+        .in('status', ['open', 'billing']) // กันกดซ้ำ: อัปเดตเฉพาะแถวที่ยัง open
         .select('id');
       if (e) throw e;
       // ปิดสำเร็จ (หรือถูกปิดไปแล้ว) -> กลับไปฟอร์มเดิม ค่าที่กรอกยังอยู่

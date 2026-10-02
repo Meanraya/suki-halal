@@ -39,3 +39,17 @@ export default function OrderPage({ params }) {
 - `/generate-qr` สร้าง QR โต๊ะ
 - `/kitchen` หน้าครัว
 - หน้าสั่งอาหาร (dynamic route) — ขั้นตอนถัดไป
+
+## ระบบล็อกอินพนักงาน (Supabase Auth, อีเมล+รหัสผ่าน)
+- หน้าพนักงานทั้งหมด (`/generate-qr`, `/kitchen`, `/cashier`, `/admin/*`) ครอบด้วย `components/AuthGuard.js` ผ่านไฟล์ `layout.js` ของแต่ละโฟลเดอร์
+- หน้าลูกค้า `/order/[tableNumber]` ไม่ต้องล็อกอิน (ใช้ role anon) ความปลอดภัยจริงมาจาก RLS ใน `supabase-setup.sql` ไม่ใช่แค่ AuthGuard
+- ปิด "Allow new users to sign up" ใน Supabase เสมอ และสร้างบัญชีพนักงานเองใน Authentication → Users
+
+## สถานะ session และการชำระเงิน
+- sessions.status: `open` (กำลังทาน) → `billing` (ลูกค้ากดเรียกเก็บเงิน รอชำระ) → `closed` (แคชเชียร์ยืนยันรับเงินที่ `/cashier`)
+- คอลัมน์เพิ่มใน sessions: `payment_method` ('cash' | 'promptpay'), `paid_amount`, `paid_at`
+- หน้าชำระเงินของลูกค้าสร้าง QR พร้อมเพย์จาก `NEXT_PUBLIC_PROMPTPAY_ID` ด้วย `lib/promptpay.js`
+- ราคาบุฟเฟต์อยู่ใน `lib/pricing.js` (ผู้ใหญ่ 289 / เด็ก 145)
+
+## จัดการเมนู
+- `/admin/menu` เพิ่ม/แก้ชื่อ/ลบ หมวดหมู่และเมนู (ตาราง menu_items ไม่มีคอลัมน์ราคา เพราะเป็นบุฟเฟต์ราคาต่อหัว)
