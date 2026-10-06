@@ -1,0 +1,78 @@
+.toastArea {
+  position: sticky;
+  top: 72px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.toastArea:empty {
+  display: none;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.box {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.boxTitle {
+  font-size: 18px;
+  color: var(--jade-900);
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.grow {
+  flex: 1 1 180px;
+  min-width: 0;
+  width: auto;
+}
+.num {
+  width: 96px;
+  flex: 0 0 96px;
+}
+.catHead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.catName {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 19px;
+  color: var(--jade-900);
+}
+.items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.items .input {
+  min-height: 46px;
+  font-size: 16px;
+}
+.del {
+  color: var(--chili);
+}
+.iconDel {
+  background: var(--chili-100);
+  color: var(--chili);
+}
+.iconDel:disabled {
+  opacity: 0.5;
+}
+.addRow {
+  padding-top: 12px;
+  border-top: 1.5px dashed var(--line);
+}

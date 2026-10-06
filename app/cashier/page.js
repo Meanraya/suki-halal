@@ -2,21 +2,19 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import { calcTotal } from '../../lib/pricing';
+import { ADULT_PRICE, CHILD_PRICE, calcTotal } from '../../lib/pricing';
+import { AlertIcon, CheckIcon } from '../../components/Icons';
+import styles from './cashier.module.css';
 
-const s = {
-  page: { maxWidth: 900, margin: '0 auto', padding: 16, fontSize: 22 },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 },
-  card: { border: '5px solid #2563eb', background: '#eff6ff', borderRadius: 14, padding: 16 },
-  btn: { width: '100%', fontSize: 22, fontWeight: 'bold', padding: 14, border: 'none', borderRadius: 10, color: '#fff', cursor: 'pointer', marginTop: 10 },
-  err: { margin: '12px 0', padding: 12, background: '#fff7ed', border: '2px solid #f97316', borderRadius: 8, color: '#9a3412' },
-};
+const METHOD_LABEL = { cash: 'เงินสด', promptpay: 'โอน/พร้อมเพย์' };
 
 export default function CashierPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [done, setDone] = useState('');
+  const [pending, setPending] = useState(null); // { row, method } รอยืนยัน
   const [now, setNow] = useState(() => Date.now());
 
   const load = useCallback(async () => {
@@ -37,49 +35,127 @@ export default function CashierPage() {
     return () => clearInterval(t);
   }, [load]);
 
-  const receive = async (row, method) => {
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => setDone(''), 4000);
+    return () => clearTimeout(t);
+  }, [done]);
+
+  useEffect(() => {
+    if (!pending) return;
+    const onKey = (e) => { if (e.key === 'Escape' && !busy) setPending(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pending, busy]);
+
+  const receive = async () => {
+    if (!pending || busy) return;
+    const { row, method } = pending;
     const total = calcTotal(row.adult_count, row.child_count);
-    const label = method === 'cash' ? 'เงินสด' : 'โอน/พร้อมเพย์';
-    if (!window.confirm(`โต๊ะ ${row.table_number}: รับ${label} ${total.toLocaleString('th-TH')} บาท ใช่หรือไม่?`)) return;
-    setBusyId(row.id);
+    setBusy(true);
     setError('');
-    const { error: e } = await supabase
+    const { data, error: e } = await supabase
       .from('sessions')
       .update({ status: 'closed', payment_method: method, paid_amount: total, paid_at: new Date().toISOString() })
       .eq('id', row.id)
       .eq('status', 'billing')
       .select('id');
-    setBusyId(null);
-    if (e) setError('บันทึกการรับเงินไม่สำเร็จ: ' + e.message);
-    else load();
+    setBusy(false);
+    setPending(null);
+    if (e) {
+      setError('บันทึกการรับเงินไม่สำเร็จ: ' + e.message);
+      return;
+    }
+    if (!data || data.length === 0) {
+      setError(`โต๊ะ ${row.table_number} ถูกปิดหรือรับเงินไปแล้วโดยเครื่องอื่น`);
+    } else {
+      setDone(`รับ${METHOD_LABEL[method]}โต๊ะ ${row.table_number} จำนวน ${total.toLocaleString('th-TH')} บาทแล้ว`);
+    }
+    load();
   };
 
+  const totalWaiting = rows.reduce((s, r) => s + calcTotal(r.adult_count, r.child_count), 0);
+
   return (
-    <main style={s.page}>
-      <h1>แคชเชียร์ · รอชำระเงิน</h1>
-      {error && <div style={s.err}>{error}</div>}
-      {loading && <p>กำลังโหลด...</p>}
-      {!loading && rows.length === 0 && <p style={{ color: '#6b7280' }}>ไม่มีโต๊ะที่รอชำระเงิน</p>}
-      <div style={s.grid}>
+    <main className="staff-page">
+      <div className="page-head">
+        <div>
+          <h1>แคชเชียร์</h1>
+          <p>โต๊ะที่กดเรียกเก็บเงินแล้ว · อัปเดตอัตโนมัติทุก 5 วินาที</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span key={rows.length} className="pill pill-saffron pop">รอชำระ {rows.length} โต๊ะ</span>
+          {rows.length > 0 && <span className="pill pill-jade">รวม {totalWaiting.toLocaleString('th-TH')} บาท</span>}
+        </div>
+      </div>
+
+      <div aria-live="polite" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {done && <div className="alert alert-success" role="status"><CheckIcon />{done}</div>}
+        {error && <div className="alert alert-error" role="alert"><AlertIcon />{error}</div>}
+      </div>
+
+      {loading && (
+        <div className={styles.grid}>
+          {[0, 1].map((i) => <div key={i} className="skeleton" style={{ height: 300 }} />)}
+        </div>
+      )}
+
+      {!loading && rows.length === 0 && (
+        <div className={styles.empty}>
+          <div className={styles.emptyIcon}><CheckIcon size={40} /></div>
+          <div className={styles.emptyTitle}>ไม่มีโต๊ะที่รอชำระเงิน</div>
+          <div className="muted">เมื่อลูกค้ากดเรียกเก็บเงิน โต๊ะจะขึ้นที่นี่</div>
+        </div>
+      )}
+
+      <div className={`${styles.grid} stagger`}>
         {rows.map((r) => {
           const total = calcTotal(r.adult_count, r.child_count);
           const mins = Math.max(0, Math.floor((now - new Date(r.created_at).getTime()) / 60000));
           return (
-            <div key={r.id} style={s.card}>
-              <div style={{ fontSize: 44, fontWeight: 'bold' }}>โต๊ะ {r.table_number}</div>
-              <div>ผู้ใหญ่ {r.adult_count} · เด็ก {r.child_count}</div>
-              <div style={{ fontSize: 34, fontWeight: 'bold', color: '#15803d', margin: '8px 0' }}>
-                {total.toLocaleString('th-TH')} บาท
+            <article key={r.id} className={`card ${styles.card}`}>
+              <div className={styles.cardTop}>
+                <span className={styles.table}>โต๊ะ {r.table_number}</span>
+                <span className="muted" style={{ fontSize: 14 }}>เปิดมา {mins} นาที</span>
               </div>
-              <div style={{ fontSize: 16, color: '#6b7280' }}>เปิดโต๊ะมา {mins} นาที</div>
-              <button type="button" style={{ ...s.btn, background: '#16a34a' }} disabled={busyId === r.id}
-                onClick={() => receive(r, 'cash')}>รับเงินสดแล้ว</button>
-              <button type="button" style={{ ...s.btn, background: '#2563eb' }} disabled={busyId === r.id}
-                onClick={() => receive(r, 'promptpay')}>รับโอน/พร้อมเพย์แล้ว</button>
-            </div>
+              <div className="summary">
+                <div className="summary-row"><span>ผู้ใหญ่ {r.adult_count} × {ADULT_PRICE}</span><span>{(r.adult_count * ADULT_PRICE).toLocaleString('th-TH')}</span></div>
+                <div className="summary-row"><span>เด็ก {r.child_count} × {CHILD_PRICE}</span><span>{(r.child_count * CHILD_PRICE).toLocaleString('th-TH')}</span></div>
+              </div>
+              <div className="summary-row" style={{ alignItems: 'baseline' }}>
+                <span>ยอดรวม</span>
+                <span className={styles.total}>{total.toLocaleString('th-TH')} บาท</span>
+              </div>
+              <div className={styles.actions}>
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => setPending({ row: r, method: 'cash' })}>รับเงินสด</button>
+                <button type="button" className="btn btn-outline" disabled={busy} onClick={() => setPending({ row: r, method: 'promptpay' })}>รับพร้อมเพย์</button>
+              </div>
+            </article>
           );
         })}
       </div>
+
+      {pending && (
+        <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget && !busy) setPending(null); }}>
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="pay-title">
+            <h2 id="pay-title">ยืนยันรับ{METHOD_LABEL[pending.method]}</h2>
+            <div className="summary">
+              <div className="summary-row"><span>โต๊ะ</span><b>{pending.row.table_number}</b></div>
+              <div className="summary-row"><span>ลูกค้า</span><b>ผู้ใหญ่ {pending.row.adult_count} · เด็ก {pending.row.child_count}</b></div>
+            </div>
+            <div className="summary-row" style={{ alignItems: 'baseline' }}>
+              <span>ยอดที่รับ</span>
+              <span className={styles.total}>{calcTotal(pending.row.adult_count, pending.row.child_count).toLocaleString('th-TH')} บาท</span>
+            </div>
+            <div className="dialog-actions">
+              <button type="button" className="btn btn-primary btn-lg" disabled={busy} onClick={receive}>
+                {busy && <span className="spinner" />}ยืนยันรับเงินแล้ว
+              </button>
+              <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => setPending(null)}>ยกเลิก</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

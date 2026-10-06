@@ -53,3 +53,10 @@ export default function OrderPage({ params }) {
 
 ## จัดการเมนู
 - `/admin/menu` เพิ่ม/แก้ชื่อ/ลบ หมวดหมู่และเมนู (ตาราง menu_items ไม่มีคอลัมน์ราคา เพราะเป็นบุฟเฟต์ราคาต่อหัว)
+
+## ดีไซน์ (Jade & Saffron)
+- โทเคนสี ฟอนต์ และอนิเมชันกลางอยู่ใน `app/globals.css` (ตัวแปร `--jade-*`, `--saffron`, `--chili`, `--ground`, `--ink`, `--muted`) ใช้คลาสกลาง เช่น `.btn .btn-primary`, `.card`, `.input`, `.alert`, `.dialog`, `.pill`, `.skeleton`, `.stagger`
+- สไตล์เฉพาะหน้าใช้ CSS Modules (`*.module.css`) ข้างไฟล์ page ห้ามใช้ `:global(...)` ปนในตัวเลือก (webpack build จะพัง) ให้ไปเขียนใน globals.css แทน
+- ฟอนต์โหลดผ่าน `next/font/google` ใน `app/layout.js`: Prompt (หัวข้อ) + IBM Plex Sans Thai (เนื้อหา)
+- ไอคอนเป็น SVG ใน `components/Icons.js` (ไม่ใช้อีโมจิในหน้าพนักงาน/ลูกค้า)
+- เคารพ `prefers-reduced-motion` (ตั้งไว้แล้วใน globals.css)

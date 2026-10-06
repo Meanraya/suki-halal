@@ -1,29 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { AlertIcon } from '../../components/Icons';
+import styles from './kitchen.module.css';
 
 const ACTIVE = ['received', 'cooking'];
-
-const s = {
-  page: { minHeight: '100vh', background: '#111827', color: '#fff', padding: 16, fontSize: 24 },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  h1: { fontSize: 36, margin: 0 },
-  status: { fontSize: 20 },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 16, alignItems: 'start' },
-  card: { borderRadius: 16, padding: 18, color: '#111827', border: '6px solid' },
-  cardNew: { background: '#ffffff', borderColor: '#22c55e' },
-  cardCooking: { background: '#fde047', borderColor: '#f97316' },
-  top: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 },
-  table: { fontSize: 56, fontWeight: 'bold', lineHeight: 1 },
-  time: { fontSize: 22, textAlign: 'right' },
-  items: { listStyle: 'none', padding: 0, margin: '12px 0', fontSize: 30, fontWeight: 'bold' },
-  itemRow: { display: 'flex', justifyContent: 'space-between', gap: 12, padding: '6px 0', borderBottom: '2px dashed rgba(0,0,0,0.2)' },
-  btnRow: { display: 'flex', gap: 10, marginTop: 8 },
-  btn: { flex: 1, fontSize: 24, fontWeight: 'bold', padding: '16px 8px', border: 'none', borderRadius: 12, cursor: 'pointer', color: '#fff' },
-  empty: { textAlign: 'center', fontSize: 36, color: '#9ca3af', marginTop: 80 },
-  err: { background: '#7c2d12', padding: 12, borderRadius: 10, marginBottom: 12 },
-};
+const LATE_MINUTES = 15;
+const FRESH_MS = 2 * 60 * 1000; // ออเดอร์ที่เพิ่งเข้าภายใน 2 นาทีจะเรืองแสง
+const LEAVE_MS = 260; // เวลาอนิเมชันการ์ดหายไป
 
 function parseItems(raw) {
   if (Array.isArray(raw)) return raw;
@@ -42,12 +27,41 @@ function sortOldestFirst(list) {
   return [...list].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 }
 
+// เสียงแจ้งเตือนสั้นๆ เมื่อมีออเดอร์ใหม่ (เบราว์เซอร์อาจบล็อกจนกว่าจะมีการแตะหน้าจอครั้งแรก)
+function playDing(ctxRef) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!ctxRef.current) ctxRef.current = new Ctx();
+    const ctx = ctxRef.current;
+    if (ctx.state === 'suspended') ctx.resume();
+    const t = ctx.currentTime;
+    [880, 1320].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + i * 0.12);
+      g.gain.exponentialRampToValueAtTime(0.18, t + i * 0.12 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.35);
+      o.connect(g).connect(ctx.destination);
+      o.start(t + i * 0.12);
+      o.stop(t + i * 0.12 + 0.4);
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function KitchenPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [live, setLive] = useState(false);
   const [error, setError] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  const [busy, setBusy] = useState({}); // { [orderId]: true } กันกดซ้ำ
+  const [leaving, setLeaving] = useState({}); // { [orderId]: true } กำลังเล่นอนิเมชันออก
+  const audioRef = useRef(null);
 
   const loadOrders = useCallback(async () => {
     const { data, error: e } = await supabase
@@ -89,7 +103,13 @@ export default function KitchenPage() {
 
     const channel = supabase
       .channel('kitchen-orders')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (p) => applyChange(p.new))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (p) => {
+        applyChange(p.new);
+        if (ACTIVE.includes(p.new.status)) {
+          setNow(Date.now());
+          playDing(audioRef);
+        }
+      })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, (p) => applyChange(p.new))
       .subscribe((status) => {
         setLive(status === 'SUBSCRIBED');
@@ -102,77 +122,130 @@ export default function KitchenPage() {
   }, [loadOrders]);
 
   const updateStatus = async (order, newStatus) => {
+    if (busy[order.id]) return;
     setError('');
+    setBusy((b) => ({ ...b, [order.id]: true }));
     const { data, error: e } = await supabase
       .from('orders')
       .update({ status: newStatus })
       .eq('id', order.id)
       .select('id, session_id, table_number, items, status, created_at');
+    setBusy((b) => {
+      const n = { ...b };
+      delete n[order.id];
+      return n;
+    });
     if (e) {
       setError('อัปเดตสถานะไม่สำเร็จ: ' + e.message);
       return;
     }
     const row = data && data[0] ? data[0] : { ...order, status: newStatus };
-    setOrders((prev) => {
+    const apply = () => setOrders((prev) => {
       const rest = prev.filter((o) => o.id !== order.id);
       return ACTIVE.includes(row.status) ? sortOldestFirst([...rest, row]) : rest;
     });
+    if (ACTIVE.includes(row.status)) {
+      apply();
+    } else {
+      // ให้การ์ดเล่นอนิเมชันหายไปก่อนค่อยเอาออก
+      setLeaving((l) => ({ ...l, [order.id]: true }));
+      setTimeout(() => {
+        apply();
+        setLeaving((l) => {
+          const n = { ...l };
+          delete n[order.id];
+          return n;
+        });
+      }, LEAVE_MS);
+    }
   };
 
+  const newCount = orders.filter((o) => o.status === 'received').length;
+  const cookingCount = orders.length - newCount;
+
   return (
-    <main style={s.page}>
-      <div style={s.header}>
-        <h1 style={s.h1}>Suki Halal · ครัว</h1>
-        <div style={s.status}>
-          {live ? '🟢 เชื่อมต่อสด' : '🟠 กำลังเชื่อมต่อ...'} · ค้าง {orders.length} ออเดอร์
+    <main className={styles.page} onPointerDown={() => audioRef.current && audioRef.current.state === 'suspended' && audioRef.current.resume()}>
+      <div className={styles.head}>
+        <h1 className={styles.title}>ครัว</h1>
+        <div className={styles.stats}>
+          <span className={styles.chip}>
+            <span className={`dot ${live ? 'dot-live' : 'dot-wait'}`} />
+            {live ? 'เชื่อมต่อสด' : 'กำลังเชื่อมต่อ...'}
+          </span>
+          <span className={styles.chip}>ใหม่ {newCount}</span>
+          <span className={styles.chip}>กำลังทำ {cookingCount}</span>
+          <span key={orders.length} className={`pill pill-solid-saffron pop ${styles.total}`}>ค้าง {orders.length} ออเดอร์</span>
         </div>
       </div>
 
-      {error && <div style={s.err}>{error}</div>}
-      {loading && <div style={s.empty}>กำลังโหลด...</div>}
-      {!loading && orders.length === 0 && <div style={s.empty}>ไม่มีออเดอร์ค้าง</div>}
+      {error && <div className={styles.err} role="alert"><AlertIcon />{error}</div>}
 
-      <div style={s.grid}>
+      {loading && (
+        <div className={styles.grid}>
+          {[0, 1, 2].map((i) => <div key={i} className="skeleton skeleton-dark" style={{ height: 260 }} />)}
+        </div>
+      )}
+
+      {!loading && orders.length === 0 && (
+        <div className={styles.empty}>
+          <div className={styles.emptyIcon}>✓</div>
+          <div>ไม่มีออเดอร์ค้าง</div>
+          <div className={styles.emptySub}>ออเดอร์ใหม่จะเด้งขึ้นที่นี่ทันทีพร้อมเสียงแจ้งเตือน</div>
+        </div>
+      )}
+
+      <div className={styles.grid}>
         {orders.map((o) => {
           const cooking = o.status === 'cooking';
-          const mins = Math.max(0, Math.floor((now - new Date(o.created_at).getTime()) / 60000));
+          const age = now - new Date(o.created_at).getTime();
+          const mins = Math.max(0, Math.floor(age / 60000));
+          const late = mins >= LATE_MINUTES;
+          const fresh = !cooking && age < FRESH_MS;
           const time = new Date(o.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
           const items = parseItems(o.items);
+          const isBusy = !!busy[o.id];
+          const cls = [
+            styles.card,
+            cooking ? styles.cardCooking : styles.cardNew,
+            late ? styles.cardLate : '',
+            fresh ? styles.cardFresh : '',
+            leaving[o.id] ? styles.cardLeaving : '',
+          ].join(' ');
           return (
-            <div key={o.id} style={{ ...s.card, ...(cooking ? s.cardCooking : s.cardNew) }}>
-              <div style={s.top}>
-                <div style={s.table}>โต๊ะ {o.table_number}</div>
-                <div style={s.time}>
+            <article key={o.id} className={cls} aria-busy={isBusy}>
+              <div className={styles.top}>
+                <div className={styles.table}>โต๊ะ {o.table_number}</div>
+                <div className={styles.time}>
                   <div>{time} น.</div>
-                  <div style={{ fontWeight: 'bold', color: mins >= 15 ? '#b91c1c' : '#111827' }}>
-                    {mins} นาทีที่แล้ว
+                  <div className={late ? styles.lateText : ''} style={{ fontWeight: 700 }}>
+                    {mins === 0 ? 'เพิ่งเข้า' : `รอ ${mins} นาที`}
                   </div>
                 </div>
               </div>
-              <div style={{ fontSize: 20, fontWeight: 'bold' }}>
-                {cooking ? '🔥 กำลังทำ' : '🆕 ออเดอร์ใหม่'}
-              </div>
-              <ul style={s.items}>
+              <span className={`pill ${cooking ? 'pill-solid-saffron' : 'pill-saffron'}`} style={{ alignSelf: 'flex-start' }}>
+                {cooking ? 'กำลังทำ' : 'ออเดอร์ใหม่'}
+              </span>
+              <ul className={styles.items}>
                 {items.map((it, i) => (
-                  <li key={i} style={s.itemRow}>
+                  <li key={i} className={styles.itemRow}>
                     <span>{it.name}</span>
-                    <span>× {it.quantity}</span>
+                    <span className={styles.itemQty}>× {it.quantity}</span>
                   </li>
                 ))}
               </ul>
-              <div style={s.btnRow}>
-                <button type="button"
-                  style={{ ...s.btn, background: '#ea580c', opacity: cooking ? 0.35 : 1 }}
-                  disabled={cooking}
+              <div className={styles.btnRow}>
+                <button type="button" className="btn btn-accent btn-lg" style={{ flex: 1 }}
+                  disabled={cooking || isBusy}
                   onClick={() => updateStatus(o, 'cooking')}>
-                  เริ่มทำ
+                  {cooking ? 'กำลังทำ' : 'เริ่มทำ'}
                 </button>
-                <button type="button" style={{ ...s.btn, background: '#16a34a' }}
+                <button type="button" className="btn btn-primary btn-lg" style={{ flex: 1 }}
+                  disabled={isBusy}
                   onClick={() => updateStatus(o, 'served')}>
-                  จัดเสิร์ฟแล้ว
+                  {isBusy && <span className="spinner" />}เสิร์ฟแล้ว
                 </button>
               </div>
-            </div>
+            </article>
           );
         })}
       </div>

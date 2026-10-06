@@ -1,24 +1,40 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { ADULT_PRICE, CHILD_PRICE, calcTotal } from '../../lib/pricing';
+import { AlertIcon, CheckIcon, MinusIcon, PlusIcon, QrIcon } from '../../components/Icons';
+import styles from './generate-qr.module.css';
 
-const s = {
-  page: { maxWidth: 520, margin: '0 auto', padding: 20, fontSize: 22 },
-  h1: { fontSize: 32, textAlign: 'center', margin: '8px 0 20px' },
-  label: { display: 'block', fontWeight: 'bold', margin: '16px 0 6px' },
-  input: { width: '100%', boxSizing: 'border-box', fontSize: 28, padding: 12, border: '2px solid #888', borderRadius: 8 },
-  btn: { width: '100%', fontSize: 26, fontWeight: 'bold', padding: 16, border: 'none', borderRadius: 10, cursor: 'pointer', marginTop: 20, background: '#16a34a', color: '#fff' },
-  btnDanger: { background: '#dc2626' },
-  btnGray: { background: '#e5e7eb', color: '#111' },
-  warn: { marginTop: 20, padding: 18, border: '4px solid #dc2626', background: '#fff1f2', borderRadius: 12, color: '#991b1b' },
-  err: { marginTop: 16, padding: 12, background: '#fff7ed', border: '2px solid #f97316', borderRadius: 8, color: '#9a3412' },
-  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 10 },
-  dialog: { background: '#fff', border: '6px solid #f97316', borderRadius: 14, padding: 22, maxWidth: 460, width: '100%' },
-  result: { marginTop: 20, textAlign: 'center' },
-  link: { wordBreak: 'break-all', fontSize: 18, color: '#1d4ed8', margin: '8px 0' },
-  copyBtn: { fontSize: 18, padding: '6px 12px', borderRadius: 6, border: '2px solid #1d4ed8', background: '#fff', color: '#1d4ed8', cursor: 'pointer', marginLeft: 8 },
-};
+const MAX_GUESTS = 50;
+
+function toCount(v) {
+  if (v === '' || v === null || v === undefined) return 0;
+  const n = Number(v);
+  return Number.isInteger(n) ? n : NaN;
+}
+
+function Counter({ id, label, price, value, onChange, disabled }) {
+  const n = toCount(value);
+  const safe = Number.isNaN(n) ? 0 : n;
+  return (
+    <div className="field">
+      <label className="label" htmlFor={id}>{label} <span className="muted" style={{ fontWeight: 400 }}>({price} บาท)</span></label>
+      <div className={styles.counter}>
+        <button type="button" className={`icon-btn ${styles.counterMinus}`} aria-label={`ลด${label}`}
+          onClick={() => onChange(String(Math.max(0, safe - 1)))} disabled={disabled || safe <= 0}>
+          <MinusIcon size={18} />
+        </button>
+        <input id={id} type="number" inputMode="numeric" min="0" max={MAX_GUESTS} className={styles.counterInput}
+          value={value} placeholder="0" disabled={disabled} onChange={(e) => onChange(e.target.value)} />
+        <button type="button" className={`icon-btn ${styles.counterPlus}`} aria-label={`เพิ่ม${label}`}
+          onClick={() => onChange(String(Math.min(MAX_GUESTS, safe + 1)))} disabled={disabled || safe >= MAX_GUESTS}>
+          <PlusIcon size={18} />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function GenerateQrPage() {
   const [table, setTable] = useState('');
@@ -30,28 +46,47 @@ export default function GenerateQrPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [qrLoaded, setQrLoaded] = useState(false);
+  const [qrFailed, setQrFailed] = useState(false);
+  const copyTimer = useRef(null);
+  const tableInput = useRef(null);
+
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
+
+  useEffect(() => {
+    if (!showConfirm) return;
+    const onKey = (e) => { if (e.key === 'Escape' && !loading) setShowConfirm(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showConfirm, loading]);
 
   const resetAll = () => {
     setTable(''); setAdults(''); setChildren('');
     setExisting(null); setShowConfirm(false);
-    setResult(null); setError(''); setCopied(false);
+    setResult(null); setError(''); setCopied(false); setQrLoaded(false); setQrFailed(false);
+    setTimeout(() => tableInput.current && tableInput.current.focus(), 0);
   };
+
+  const a = toCount(adults);
+  const c = toCount(children);
+  const estimate = Number.isNaN(a) || Number.isNaN(c) ? 0 : calcTotal(a, c);
 
   const handleOpenTable = async (e) => {
     e.preventDefault();
+    if (loading) return;
     setError('');
-    const t = parseInt(table, 10);
-    const a = parseInt(adults || '0', 10);
-    const c = parseInt(children || '0', 10);
+    const t = Number(table);
 
-    if (!Number.isInteger(t) || t < 1) return setError('กรุณากรอกเลขโต๊ะเป็นตัวเลข');
-    if (a < 0 || c < 0 || a + c < 1) return setError('กรุณากรอกจำนวนลูกค้าอย่างน้อย 1 คน');
+    if (!Number.isInteger(t) || t < 1) return setError('กรุณากรอกเลขโต๊ะเป็นตัวเลขจำนวนเต็มตั้งแต่ 1');
+    if (Number.isNaN(a) || Number.isNaN(c) || a < 0 || c < 0) return setError('จำนวนลูกค้าต้องเป็นจำนวนเต็มไม่ติดลบ');
+    if (a + c < 1) return setError('กรุณากรอกจำนวนลูกค้าอย่างน้อย 1 คน');
+    if (a + c > MAX_GUESTS) return setError(`จำนวนลูกค้ารวมต้องไม่เกิน ${MAX_GUESTS} คน`);
 
     setLoading(true);
     try {
       const { data: open, error: e1 } = await supabase
         .from('sessions')
-        .select('id, adult_count, child_count, created_at')
+        .select('id, adult_count, child_count, created_at, status')
         .eq('table_number', t)
         .in('status', ['open', 'billing'])
         .order('created_at', { ascending: false })
@@ -68,6 +103,8 @@ export default function GenerateQrPage() {
         .insert({ table_number: t, adult_count: a, child_count: c, status: 'open' });
       if (e2) throw e2;
 
+      setQrLoaded(false);
+      setQrFailed(false);
       setResult({
         table: t, adults: a, children: c,
         url: `${window.location.origin}/order/${t}`,
@@ -80,6 +117,7 @@ export default function GenerateQrPage() {
   };
 
   const handleConfirmClose = async () => {
+    if (loading) return;
     setLoading(true);
     setError('');
     try {
@@ -87,7 +125,7 @@ export default function GenerateQrPage() {
         .from('sessions')
         .update({ status: 'closed' })
         .eq('id', existing.id)
-        .in('status', ['open', 'billing']) // กันกดซ้ำ: อัปเดตเฉพาะแถวที่ยัง open
+        .in('status', ['open', 'billing']) // กันกดซ้ำ: อัปเดตเฉพาะแถวที่ยังเปิดอยู่
         .select('id');
       if (e) throw e;
       // ปิดสำเร็จ (หรือถูกปิดไปแล้ว) -> กลับไปฟอร์มเดิม ค่าที่กรอกยังอยู่
@@ -105,7 +143,8 @@ export default function GenerateQrPage() {
     try {
       await navigator.clipboard.writeText(result.url);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       setError('คัดลอกไม่สำเร็จ กรุณาคัดลอกลิงก์ด้วยตัวเอง');
     }
@@ -115,83 +154,113 @@ export default function GenerateQrPage() {
     ? Math.max(0, Math.floor((Date.now() - new Date(existing.created_at).getTime()) / 60000))
     : 0;
 
-  // ---------- หน้าผลลัพธ์ QR ----------
-  if (result) {
-    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(result.url)}`;
-    return (
-      <main style={s.page}>
-        <h1 style={s.h1}>Suki Halal</h1>
-        <div style={s.result}>
-          <img src={qrSrc} alt={`QR Code โต๊ะ ${result.table}`} width={300} height={300} />
-          <p style={{ fontSize: 26, fontWeight: 'bold' }}>
-            โต๊ะ {result.table} · ผู้ใหญ่ {result.adults} · เด็ก {result.children}
-          </p>
-          <div style={s.link}>
-            {result.url}
-            <button type="button" style={s.copyBtn} onClick={handleCopy}>
-              {copied ? 'คัดลอกแล้ว ✓' : 'คัดลอกลิงก์'}
-            </button>
-          </div>
-          {error && <div style={s.err}>{error}</div>}
-          <button type="button" style={s.btn} onClick={resetAll}>เปิดโต๊ะใหม่</button>
-        </div>
-      </main>
-    );
-  }
-
-  // ---------- ฟอร์มเปิดโต๊ะ ----------
   return (
-    <main style={s.page}>
-      <h1 style={s.h1}>Suki Halal · เปิดโต๊ะ</h1>
-
-      <form onSubmit={handleOpenTable}>
-        <label style={s.label} htmlFor="table">เลขโต๊ะ</label>
-        <input id="table" style={s.input} type="number" inputMode="numeric" min="1"
-          value={table}
-          onChange={(e) => { setTable(e.target.value); setExisting(null); }} />
-
-        <label style={s.label} htmlFor="adults">จำนวนผู้ใหญ่</label>
-        <input id="adults" style={s.input} type="number" inputMode="numeric" min="0"
-          value={adults} onChange={(e) => setAdults(e.target.value)} />
-
-        <label style={s.label} htmlFor="children">จำนวนเด็ก</label>
-        <input id="children" style={s.input} type="number" inputMode="numeric" min="0"
-          value={children} onChange={(e) => setChildren(e.target.value)} />
-
-        <button type="submit" style={{ ...s.btn, opacity: loading ? 0.6 : 1 }} disabled={loading}>
-          {loading ? 'กำลังทำงาน...' : 'เปิดโต๊ะ'}
-        </button>
-      </form>
-
-      {error && <div style={s.err}>{error}</div>}
-
-      {existing && (
-        <div style={s.warn}>
-          <p style={{ fontWeight: 'bold', margin: '0 0 12px' }}>
-            ⚠️ โต๊ะนี้มีลูกค้าอยู่ระหว่างทานอาหาร กรุณาปิดออเดอร์เดิมก่อน
-          </p>
-          <button type="button" style={{ ...s.btn, ...s.btnDanger, marginTop: 0 }}
-            onClick={() => setShowConfirm(true)}>
-            ปิดออเดอร์เดิม
-          </button>
+    <main className="staff-page">
+      <div className="page-head">
+        <div>
+          <h1>เปิดโต๊ะ</h1>
+          <p>กรอกเลขโต๊ะและจำนวนลูกค้า แล้วให้ลูกค้าสแกน QR เพื่อสั่งอาหาร</p>
         </div>
-      )}
+      </div>
+
+      <div className={styles.layout}>
+        <form className={`card ${styles.formCard} fade-up`} onSubmit={handleOpenTable}>
+          <div className="field">
+            <label className="label" htmlFor="table">เลขโต๊ะ</label>
+            <input id="table" ref={tableInput} className="input input-xl" type="number" inputMode="numeric" min="1"
+              value={table} placeholder="เช่น 7" disabled={!!result}
+              onChange={(e) => { setTable(e.target.value); setExisting(null); }} />
+          </div>
+
+          <div className={styles.counters}>
+            <Counter id="adults" label="ผู้ใหญ่" price={ADULT_PRICE} value={adults} onChange={setAdults} disabled={!!result} />
+            <Counter id="children" label="เด็ก" price={CHILD_PRICE} value={children} onChange={setChildren} disabled={!!result} />
+          </div>
+
+          <div className={styles.estimateRow}>
+            <span>ยอดประมาณการ</span>
+            <span key={estimate} className={`display pop ${styles.estimate}`}>{estimate.toLocaleString('th-TH')} บาท</span>
+          </div>
+
+          {error && <div className="alert alert-error" role="alert"><AlertIcon />{error}</div>}
+
+          {existing && (
+            <div className={styles.warn} role="alert">
+              <div style={{ display: 'flex', gap: 10 }}>
+                <AlertIcon size={22} />
+                <div>
+                  <b>โต๊ะ {existing.table_number} ยัง{existing.status === 'billing' ? 'รอชำระเงิน' : 'มีลูกค้าทานอยู่'}</b>
+                  <div style={{ fontSize: 15 }}>กรุณาปิดออเดอร์เดิมก่อนเปิดโต๊ะใหม่</div>
+                </div>
+              </div>
+              <button type="button" className="btn btn-danger btn-block" onClick={() => setShowConfirm(true)}>
+                ปิดออเดอร์เดิม
+              </button>
+            </div>
+          )}
+
+          {result ? (
+            <button type="button" className="btn btn-outline btn-lg btn-block" onClick={resetAll}>เปิดโต๊ะใหม่</button>
+          ) : (
+            <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={loading}>
+              {loading && <span className="spinner" />}
+              {loading ? 'กำลังทำงาน...' : 'เปิดโต๊ะและสร้าง QR'}
+            </button>
+          )}
+        </form>
+
+        <section className={`${styles.qrPanel} ${result ? styles.qrPanelOn : ''}`} aria-live="polite">
+          {result ? (
+            <div className={styles.qrContent} key={result.url}>
+              <div className={styles.qrHead}>
+                <span className="display" style={{ fontSize: 22, fontWeight: 600 }}>โต๊ะ {result.table} พร้อมแล้ว</span>
+                <span className="pill pill-solid-saffron"><CheckIcon size={16} /> เปิดแล้ว</span>
+              </div>
+              <div className={styles.qrBox}>
+                {qrFailed ? (
+                  <div className={styles.qrFail}>โหลด QR ไม่สำเร็จ<br />ให้ลูกค้าเปิดลิงก์ด้านล่างแทน</div>
+                ) : !qrLoaded && <div className="skeleton" style={{ position: 'absolute', inset: 0 }} />}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(result.url)}`}
+                  alt={`QR Code โต๊ะ ${result.table}`} width={240} height={240}
+                  onLoad={() => setQrLoaded(true)} onError={() => setQrFailed(true)} style={{ opacity: qrLoaded ? 1 : 0 }} />
+              </div>
+              <span className={styles.guests}>ผู้ใหญ่ {result.adults} · เด็ก {result.children}</span>
+              <div className={styles.linkRow}>
+                <span className={styles.link} title={result.url}>{result.url}</span>
+                <button type="button" className="btn btn-accent btn-sm" onClick={handleCopy}>
+                  {copied ? <><CheckIcon size={16} /> คัดลอกแล้ว</> : 'คัดลอกลิงก์'}
+                </button>
+              </div>
+              <button type="button" className="btn btn-on-dark btn-block" onClick={() => window.print()}>พิมพ์ QR</button>
+            </div>
+          ) : (
+            <div className={styles.qrPlaceholder}>
+              <QrIcon size={56} />
+              <span>QR ของโต๊ะจะแสดงที่นี่</span>
+            </div>
+          )}
+        </section>
+      </div>
 
       {existing && showConfirm && (
-        <div style={s.overlay}>
-          <div style={s.dialog} role="dialog" aria-modal="true">
-            <h2 style={{ marginTop: 0, color: '#c2410c' }}>ยืนยันปิดโต๊ะเดิม?</h2>
-            <p>โต๊ะ <b>{existing.table_number}</b></p>
-            <p>ผู้ใหญ่ <b>{existing.adult_count}</b> · เด็ก <b>{existing.child_count}</b></p>
-            <p>เปิดมาแล้ว <b>{minutesOpen}</b> นาที</p>
-            <button type="button" style={{ ...s.btn, ...s.btnDanger, opacity: loading ? 0.6 : 1 }}
-              onClick={handleConfirmClose} disabled={loading}>
-              ยืนยันปิดโต๊ะเดิม
-            </button>
-            <button type="button" style={{ ...s.btn, ...s.btnGray }}
-              onClick={() => setShowConfirm(false)} disabled={loading}>
-              ยกเลิก
-            </button>
+        <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget && !loading) setShowConfirm(false); }}>
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="close-title">
+            <h2 id="close-title" style={{ color: 'var(--chili)' }}>ยืนยันปิดโต๊ะเดิม?</h2>
+            <div className="summary">
+              <div className="summary-row"><span>โต๊ะ</span><b>{existing.table_number}</b></div>
+              <div className="summary-row"><span>ลูกค้า</span><b>ผู้ใหญ่ {existing.adult_count} · เด็ก {existing.child_count}</b></div>
+              <div className="summary-row"><span>เปิดมาแล้ว</span><b>{minutesOpen} นาที</b></div>
+              {existing.status === 'billing' && (
+                <div className="summary-row"><span>สถานะ</span><b style={{ color: 'var(--chili)' }}>รอชำระเงิน (ยังไม่ได้รับเงิน)</b></div>
+              )}
+            </div>
+            <div className="dialog-actions">
+              <button type="button" className="btn btn-danger btn-lg" onClick={handleConfirmClose} disabled={loading}>
+                {loading && <span className="spinner" />}ยืนยันปิดโต๊ะเดิม
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setShowConfirm(false)} disabled={loading}>ยกเลิก</button>
+            </div>
           </div>
         </div>
       )}
