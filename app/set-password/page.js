@@ -22,9 +22,11 @@ export default function SetPasswordPage() {
   const [confirmPw, setConfirmPw] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isReset, setIsReset] = useState(false); // มาจาก "ลืมรหัสผ่าน" (ไม่ใช่คำเชิญ)
 
   useEffect(() => {
     let active = true;
+    setIsReset(new URLSearchParams(window.location.search).get('mode') === 'reset');
     const fromLink = linkError();
     if (fromLink) {
       setStatus('invalid');
@@ -33,6 +35,8 @@ export default function SetPasswordPage() {
     const apply = (session) => {
       if (!active) return;
       if (session) {
+        // ลบโทเคนออกจากแถบที่อยู่ทันที ไม่ให้ค้างในประวัติเบราว์เซอร์
+        if (window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search);
         setEmail(session.user.email || '');
         setStatus('ready');
       }
@@ -64,7 +68,7 @@ export default function SetPasswordPage() {
       return;
     }
     // ล้างโทเคนออกจาก URL
-    window.history.replaceState(null, '', '/set-password');
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
     setStatus('done');
     setTimeout(() => router.replace('/generate-qr'), 1500);
   };
@@ -83,7 +87,7 @@ export default function SetPasswordPage() {
       <div className="state-screen">
         <div className="state-icon" style={{ background: 'var(--saffron-100)', color: 'var(--saffron-ink)' }}><AlertIcon size={40} /></div>
         <div className="state-title">ลิงก์ใช้ไม่ได้หรือหมดอายุ</div>
-        <div className="state-text">กรุณาขอให้หัวหน้ากด &quot;ส่งใหม่&quot; ที่หน้าพนักงาน แล้วเปิดลิงก์จากอีเมลล่าสุด</div>
+        <div className="state-text">ขอลิงก์ใหม่ได้ที่ &quot;ลืมรหัสผ่าน?&quot; ในหน้าเข้าสู่ระบบ หรือให้หัวหน้ากด &quot;ส่งใหม่&quot; ที่หน้าพนักงาน แล้วเปิดลิงก์จากอีเมลล่าสุด</div>
         <a href="/login" className="btn btn-outline">ไปหน้าเข้าสู่ระบบ</a>
       </div>
     );
@@ -103,8 +107,8 @@ export default function SetPasswordPage() {
     <main className={styles.page}>
       <div className={styles.hero}>
         <div className={styles.logo}><PotIcon size={38} color="#e8a33d" /></div>
-        <h1 className={styles.title}>ยินดีต้อนรับ</h1>
-        <p className="muted">ตั้งรหัสผ่านสำหรับ <b>{email}</b></p>
+        <h1 className={styles.title}>{isReset ? 'ตั้งรหัสผ่านใหม่' : 'ยินดีต้อนรับ'}</h1>
+        <p className="muted">{isReset ? 'รหัสผ่านใหม่สำหรับ' : 'ตั้งรหัสผ่านสำหรับ'} <b>{email}</b></p>
       </div>
       <form className={`card ${styles.form}`} onSubmit={submit}>
         <input type="email" value={email} autoComplete="username" readOnly hidden />

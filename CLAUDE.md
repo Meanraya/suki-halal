@@ -47,6 +47,7 @@ export default function OrderPage({ params }) {
 - หน้าลูกค้า `/order/[tableNumber]` ไม่ต้องล็อกอิน (ใช้ role anon) ความปลอดภัยจริงมาจาก RLS ใน `supabase-setup.sql` ไม่ใช่แค่ AuthGuard
 - ปิด "Allow new users to sign up" ใน Supabase เสมอ (RLS ให้ทุกบัญชีที่ล็อกอินได้สิทธิ์พนักงานเต็ม ถ้าเปิดสมัครเอง คนนอกจะเข้าหลังร้านได้)
 - เพิ่มพนักงานใหม่ที่ `/admin/staff`: กรอกอีเมล → `app/api/staff/route.js` เรียก Supabase Admin API (`inviteUserByEmail`) → พนักงานเปิดลิงก์ในอีเมลไปที่ `/set-password` เพื่อตั้งรหัสผ่านเอง
+- ลืมรหัสผ่าน: ปุ่มใน `/login` เรียก `resetPasswordForEmail` (redirect ไป `/set-password?mode=reset`) ข้อความตอบกลับเหมือนกันเสมอ ไม่บอกว่าอีเมลมีบัญชีหรือไม่
 - Admin API ใช้ `SUPABASE_SERVICE_ROLE_KEY` ผ่าน `lib/supabaseAdmin.js` (มี `import 'server-only'`) ห้ามใช้ใน client และห้ามตั้งชื่อขึ้นต้น `NEXT_PUBLIC_`
 - ทุกคำขอไป `/api/staff` ต้องแนบ `Authorization: Bearer <access_token>` ของพนักงานที่ล็อกอินอยู่ พนักงานทุกคนมีสิทธิ์เท่ากัน
 

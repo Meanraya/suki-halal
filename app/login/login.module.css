@@ -51,3 +51,36 @@
   20%, 60% { transform: translateX(-8px); }
   40%, 80% { transform: translateX(8px); }
 }
+.labelRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.linkBtn {
+  border: none;
+  background: none;
+  padding: 6px 2px;
+  min-height: 32px;
+  color: var(--jade-700);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.linkBtn:hover {
+  color: var(--jade-900);
+}
+.sentIcon {
+  align-self: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 18px;
+  background: var(--jade-100);
+  color: var(--jade-700);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: popIn 0.5s var(--ease-spring);
+}
