@@ -7,6 +7,7 @@ const LINKS = [
   { href: '/kitchen', title: 'หน้าครัว', desc: 'ดูออเดอร์แบบเรียลไทม์และอัปเดตสถานะ' },
   { href: '/cashier', title: 'แคชเชียร์', desc: 'รับชำระเงินโต๊ะที่เรียกเก็บเงิน' },
   { href: '/admin/menu', title: 'จัดการเมนู', desc: 'เพิ่ม แก้ไข ลบ หมวดหมู่และเมนู' },
+  { href: '/admin/staff', title: 'พนักงาน', desc: 'เชิญพนักงานใหม่และจัดการบัญชี' },
 ];
 
 export default function Home() {

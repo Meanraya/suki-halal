@@ -20,3 +20,10 @@ npm run dev
 
 ## ตั้งค่า Supabase ครั้งแรก
 รันไฟล์ `supabase-setup.sql` ใน Supabase → SQL Editor แล้วสร้างบัญชีพนักงานที่ Authentication → Users
+
+## เพิ่มพนักงานใหม่ (หน้า /admin/staff)
+1. ใน Supabase → Project Settings → API คัดลอก **service_role key** ไปตั้งใน Vercel เป็น `SUPABASE_SERVICE_ROLE_KEY` (ห้ามใส่ `NEXT_PUBLIC_` นำหน้า และห้ามเผยแพร่)
+2. (แนะนำ) ตั้ง `SITE_URL` ใน Vercel เป็นโดเมนจริงของร้าน
+3. ใน Supabase → Authentication → URL Configuration ใส่ Site URL เป็นโดเมนจริง และเพิ่ม `https://<โดเมนของร้าน>/set-password` ใน Redirect URLs
+4. ยังคงปิด "Allow new users to sign up" ไว้ (การเชิญผ่าน Admin API ใช้ได้แม้ปิดสมัคร)
+5. อีเมลในตัวของ Supabase ส่งได้จำกัดต่อชั่วโมง ถ้าเชิญพนักงานบ่อยให้ตั้ง Custom SMTP ใน Authentication → Emails

@@ -11,6 +11,7 @@ const LINKS = [
   { href: '/kitchen', label: 'ครัว' },
   { href: '/cashier', label: 'แคชเชียร์' },
   { href: '/admin/menu', label: 'จัดการเมนู' },
+  { href: '/admin/staff', label: 'พนักงาน' },
 ];
 
 export default function AuthGuard({ children }) {

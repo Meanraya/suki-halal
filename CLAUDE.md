@@ -25,6 +25,8 @@ export default function OrderPage({ params }) {
 ## Environment variables (.env.local และตั้งใน Vercel)
 - NEXT_PUBLIC_SUPABASE_URL
 - NEXT_PUBLIC_SUPABASE_ANON_KEY
+- SUPABASE_SERVICE_ROLE_KEY (เฉพาะฝั่งเซิร์ฟเวอร์ ใช้ในหน้าจัดการพนักงาน)
+- SITE_URL (ไม่บังคับ) โดเมนจริงของเว็บ ใช้สร้างลิงก์ในอีเมลเชิญ เช่น https://suki-halal.vercel.app
 
 ใช้ client จาก `lib/supabaseClient.js`
 
@@ -43,7 +45,10 @@ export default function OrderPage({ params }) {
 ## ระบบล็อกอินพนักงาน (Supabase Auth, อีเมล+รหัสผ่าน)
 - หน้าพนักงานทั้งหมด (`/generate-qr`, `/kitchen`, `/cashier`, `/admin/*`) ครอบด้วย `components/AuthGuard.js` ผ่านไฟล์ `layout.js` ของแต่ละโฟลเดอร์
 - หน้าลูกค้า `/order/[tableNumber]` ไม่ต้องล็อกอิน (ใช้ role anon) ความปลอดภัยจริงมาจาก RLS ใน `supabase-setup.sql` ไม่ใช่แค่ AuthGuard
-- ปิด "Allow new users to sign up" ใน Supabase เสมอ และสร้างบัญชีพนักงานเองใน Authentication → Users
+- ปิด "Allow new users to sign up" ใน Supabase เสมอ (RLS ให้ทุกบัญชีที่ล็อกอินได้สิทธิ์พนักงานเต็ม ถ้าเปิดสมัครเอง คนนอกจะเข้าหลังร้านได้)
+- เพิ่มพนักงานใหม่ที่ `/admin/staff`: กรอกอีเมล → `app/api/staff/route.js` เรียก Supabase Admin API (`inviteUserByEmail`) → พนักงานเปิดลิงก์ในอีเมลไปที่ `/set-password` เพื่อตั้งรหัสผ่านเอง
+- Admin API ใช้ `SUPABASE_SERVICE_ROLE_KEY` ผ่าน `lib/supabaseAdmin.js` (มี `import 'server-only'`) ห้ามใช้ใน client และห้ามตั้งชื่อขึ้นต้น `NEXT_PUBLIC_`
+- ทุกคำขอไป `/api/staff` ต้องแนบ `Authorization: Bearer <access_token>` ของพนักงานที่ล็อกอินอยู่ พนักงานทุกคนมีสิทธิ์เท่ากัน
 
 ## สถานะ session และการชำระเงิน
 - sessions.status: `open` (กำลังทาน) → `billing` (ลูกค้ากดเรียกเก็บเงิน รอชำระ) → `closed` (แคชเชียร์ยืนยันรับเงินที่ `/cashier`)
